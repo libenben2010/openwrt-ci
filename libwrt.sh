@@ -9,3 +9,8 @@ rm -rf package/feeds/pw_packages/xray-geodata
 rm -rf package/feeds/packages/v2ray-geodata
 
 # --- 备注：已移除 IP 修改命令，保持默认 192.168.1.1 ---
+# 清理打包前的巨型数据库
+find . -name "geoip.dat" -type f -delete
+find . -name "geosite.dat" -type f -delete
+find . -name "geoip.db" -type f -delete
+find . -name "geosite.db" -type f -delete
