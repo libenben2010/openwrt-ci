@@ -14,9 +14,9 @@ on:
       config_path:
         description: "Config path in THIS repo"
         required: true
-        default: "configs/ipq60xx-6.12-wifi.config"
+        default: "configs/ipq60xx-ax5-fixed.config"
       upload_release:
-        description: "Upload to GitHub Release"
+        description: "Upload firmware to GitHub Release (true/false)"
         required: true
         default: "false"
 
@@ -32,7 +32,7 @@ jobs:
 
       - name: Validate config exists
         run: |
-          test -f "${{ github.event.inputs.config_path }}" || (echo "Config not found" && exit 1)
+          test -f "${{ github.event.inputs.config_path }}" || (echo "Config not found: ${{ github.event.inputs.config_path }}" && exit 1)
 
       - name: Install dependencies
         run: |
@@ -57,11 +57,37 @@ jobs:
           cp "${{ github.event.inputs.config_path }}" openwrt/.config
           sed -i 's/\r$//' openwrt/.config
 
-      - name: Defconfig check
+      - name: Validate target profile (AX5 hard check)
         working-directory: openwrt
         run: |
+          set -e
           make defconfig
-          grep -E "CONFIG_TARGET_qualcommax|CONFIG_TARGET_qualcommax_ipq60xx|redmi_ax5|ATH11K_MEM_PROFILE|IPQ_MEM_PROFILE|KERNEL_IPQ_MEM_PROFILE" .config || true
+
+          echo "=== key configs ==="
+          grep -E "CONFIG_TARGET_qualcommax|CONFIG_TARGET_qualcommax_ipq60xx|CONFIG_TARGET_MULTI_PROFILE|CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_redmi_ax5|ATH11K_MEM_PROFILE|IPQ_MEM_PROFILE|KERNEL_IPQ_MEM_PROFILE|qca-nss" .config || true
+
+          # 必须命中 AX5 单机型
+          grep -q "^CONFIG_TARGET_qualcommax=y$" .config
+          grep -q "^CONFIG_TARGET_qualcommax_ipq60xx=y$" .config
+          grep -q "^CONFIG_TARGET_MULTI_PROFILE=n$" .config
+          grep -q "^CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_redmi_ax5=y$" .config
+
+          # 禁止落到其他 profile（如 mango-dvk）
+          if grep -q "8devices_mango-dvk" .config; then
+            echo "ERROR: wrong profile selected (mango-dvk)"
+            exit 1
+          fi
+
+          # 内存档位必须 256
+          grep -q "^CONFIG_ATH11K_MEM_PROFILE_256M=y$" .config
+          grep -q "^CONFIG_IPQ_MEM_PROFILE_256=y$" .config
+          grep -q "^CONFIG_KERNEL_IPQ_MEM_PROFILE=256$" .config
+
+      - name: Upload resolved .config
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolved-config
+          path: openwrt/.config
 
       - name: Download sources
         working-directory: openwrt
@@ -77,7 +103,7 @@ jobs:
           mkdir -p artifacts
           cp -r openwrt/bin/targets/qualcommax/ipq60xx artifacts/ || true
 
-      - name: Upload artifacts
+      - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ax5-ipq60xx-firmware
