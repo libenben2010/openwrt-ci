@@ -62,8 +62,8 @@ jobs:
             "${{ github.event.inputs.openwrt_repo }}" \
             openwrt
           grep -q "redmi_ax5" openwrt/target/linux/qualcommax/image/ipq60xx.mk && \
-          echo "✅ redmi_ax5 found in source" || \
-          (echo "ERROR: redmi_ax5 not in this branch" && exit 1)
+            echo "✅ redmi_ax5 found in source" || \
+            (echo "ERROR: redmi_ax5 not in this branch" && exit 1)
 
       - name: Prepare feeds
         working-directory: openwrt
@@ -72,36 +72,58 @@ jobs:
           ./scripts/feeds install -a
 
       - name: Apply config
+        working-directory: openwrt
         run: |
-          cp "${{ github.event.inputs.config_path }}" openwrt/.config
-          sed -i 's/\r$//' openwrt/.config
+          # 第一阶段：只写设备行，强制覆盖 mango-dvk 的 default y
+          echo "CONFIG_TARGET_qualcommax=y" > .config
+          echo "CONFIG_TARGET_qualcommax_ipq60xx=y" >> .config
+          echo "# CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_8devices_mango-dvk is not set" >> .config
+          echo "CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_redmi_ax5=y" >> .config
+          
+          make defconfig
+          
+          # 第一阶段验证
+          grep -q 'CONFIG_TARGET_PROFILE="DEVICE_redmi_ax5"' .config || \
+            (echo "ERROR: 第一阶段设备选择失败" && grep "TARGET_PROFILE" .config && exit 1)
+          echo "✅ 第一阶段 AX5 选中"
+          
+          # 第二阶段：叠加包配置（过滤掉 TARGET 行避免冲突）
+          grep -v "^CONFIG_TARGET_" "$GITHUB_WORKSPACE/${{ github.event.inputs.config_path }}" | \
+            grep -v "^# CONFIG_TARGET_" >> .config
+          
+          # 第二阶段 defconfig 融合包配置
+          make defconfig
+          
+          # 强制恢复 AX5（defconfig 会再次重置）
+          sed -i 's|CONFIG_TARGET_PROFILE=.*|CONFIG_TARGET_PROFILE="DEVICE_redmi_ax5"|' .config
+          sed -i 's|CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_8devices_mango-dvk=y|# CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_8devices_mango-dvk is not set|g' .config
+          grep -q "CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_redmi_ax5=y" .config || \
+            echo "CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_redmi_ax5=y" >> .config
+          
+          sed -i 's/\r$//' .config
+          echo "✅ Apply config 完成"
 
       - name: Validate target profile (AX5 hard check)
         working-directory: openwrt
         run: |
+          # 注意：这里不再运行 make defconfig，直接检查已有 .config
           set -e
-          make defconfig
-
           echo "======= key configs ======="
-          grep -E "CONFIG_TARGET_qualcommax|MULTI_PROFILE|TARGET_PROFILE|DEVICE_redmi_ax5|DEVICE_8devices|ATH11K_MEM_PROFILE|IPQ_MEM_PROFILE|KERNEL_IPQ_MEM_PROFILE" .config || true
+          grep -E "TARGET_PROFILE|DEVICE_redmi_ax5|DEVICE_8devices|ATH11K_MEM_PROFILE|IPQ_MEM_PROFILE|KERNEL_IPQ_MEM_PROFILE" .config || true
           echo "==========================="
-
-          grep -q "^CONFIG_TARGET_qualcommax=y$" .config
-          grep -q "^CONFIG_TARGET_qualcommax_ipq60xx=y$" .config
-
+          
           grep -q 'CONFIG_TARGET_PROFILE="DEVICE_redmi_ax5"' .config || \
-          (echo "ERROR: AX5 未被选中，当前 PROFILE:" && \
-          grep "CONFIG_TARGET_PROFILE" .config && exit 1)
-
+            (echo "ERROR: AX5 未被选中" && grep "TARGET_PROFILE" .config && exit 1)
+          
           if grep -q 'CONFIG_TARGET_PROFILE="DEVICE_8devices_mango-dvk"' .config; then
             echo "ERROR: 落到了错误的 profile (mango-dvk)"
             exit 1
           fi
-
+          
           grep -q "^CONFIG_ATH11K_MEM_PROFILE_256M=y$" .config
           grep -q "^CONFIG_IPQ_MEM_PROFILE_256=y$" .config
           grep -q "^CONFIG_KERNEL_IPQ_MEM_PROFILE=256$" .config
-
+          
           echo "✅ 校验通过：AX5 + 256MB"
 
       - name: Upload resolved .config
